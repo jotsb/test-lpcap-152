@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Hello-C-World</string>
+    <string name="enter_text">Enter Text Here</string>
+    <string name="action_settings">Settings</string>
+
+</resources>

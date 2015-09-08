@@ -1,0 +1,38 @@
+Android NDK: WARNING: APP_PLATFORM android-21 is larger than android:minSdkVersion 15 in ./AndroidManifest.xml    
+[arm64-v8a] Compile        : com_example_hello_c_world_NDKMethods <= com_example_hello_c_world_NDKMethods.c
+[arm64-v8a] Compile        : pcap <= bpf_dump.c
+[arm64-v8a] Compile        : pcap <= bpf_filter.c
+[arm64-v8a] Compile        : pcap <= bpf_image.c
+[arm64-v8a] Compile        : pcap <= etherent.c
+[arm64-v8a] Compile        : pcap <= fad-gifc.c
+[arm64-v8a] Compile        : pcap <= gencode.c
+[arm64-v8a] Compile        : pcap <= grammar.c
+[arm64-v8a] Compile        : pcap <= inet.c
+[arm64-v8a] Compile        : pcap <= nametoaddr.c
+[arm64-v8a] Compile        : pcap <= optimize.c
+[arm64-v8a] Compile        : pcap <= pcap.c
+[arm64-v8a] Compile        : pcap <= pcap-linux.c
+[arm64-v8a] Compile        : pcap <= savefile.c
+[arm64-v8a] Compile        : pcap <= scanner.c
+[arm64-v8a] Compile        : pcap <= version.c
+[arm64-v8a] StaticLibrary  : libpcap.a
+[arm64-v8a] Executable     : com_example_hello_c_world_NDKMethods
+In file included from /home/jb/Documents/Android/NDK/ndk/platforms/android-21/arch-arm64/usr/include/netinet/ether.h:28:0,
+                 from jni/libpcap/nametoaddr.c:60:
+/home/jb/Documents/Android/NDK/ndk/platforms/android-21/arch-arm64/usr/include/net/if_ether.h:49:0: warning: "ETHER_ADDR_LEN" redefined
+ #define ETHER_ADDR_LEN 6 /* length of an Ethernet address */
+ ^
+In file included from jni/libpcap/nametoaddr.c:57:0:
+/home/jb/Documents/Android/NDK/ndk/platforms/android-21/arch-arm64/usr/include/netinet/if_ether.h:33:0: note: this is the location of the previous definition
+ #define ETHER_ADDR_LEN ETH_ALEN
+ ^
+jni/libpcap/pcap-linux.c:113:0: warning: "_GNU_SOURCE" redefined
+ #define _GNU_SOURCE
+ ^
+<command-line>:0:0: note: this is the location of the previous definition
+/home/jb/Documents/Android/NDK/ndk/platforms/android-21/arch-arm64/usr/lib/crtbegin_dynamic.o: In function `do_arm64_start':
+:(.text+0x20): undefined reference to `main'
+:(.text+0x4c): undefined reference to `main'
+collect2: error: ld returned 1 exit status
+make: *** [obj/local/arm64-v8a/com_example_hello_c_world_NDKMethods] Error 1
+
