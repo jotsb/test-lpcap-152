@@ -289,7 +289,8 @@ struct pcap_linux {
 	struct pcap_stat stat;
 
 	char	*device;	/* device name */
-	int	filtering_in_kernel; /* using kernel filter */
+	int	filter_in_userland; /* must filter in userland */
+	int	blocks_to_filter_in_userland;
 	int	must_do_on_close; /* stuff we must do when we close */
 	int	timeout;	/* timeout for buffering */
 	int	sock_packet;	/* using Linux 2.0 compatible interface */
@@ -1703,7 +1704,7 @@ pcap_read_packet(pcap_t *handle, pcap_handler callback, u_char *userdata)
 		caplen = handle->snapshot;
 
 	/* Run the packet filter if not using kernel filter */
-	if (!handlep->filtering_in_kernel && handle->fcode.bf_insns) {
+	if (handlep->filter_in_userland && handle->fcode.bf_insns) {
 		if (bpf_filter(handle->fcode.bf_insns, bp,
 		                packet_len, caplen) == 0)
 		{
@@ -2387,7 +2388,7 @@ pcap_setfilter_linux_common(pcap_t *handle, struct bpf_program *filter,
 	 * Run user level packet filter by default. Will be overriden if
 	 * installing a kernel filter succeeds.
 	 */
-	handlep->filtering_in_kernel = 0;
+	handlep->filter_in_userland = 1;
 
 	/* Install kernel level filter if possible */
 
@@ -2475,8 +2476,11 @@ pcap_setfilter_linux_common(pcap_t *handle, struct bpf_program *filter,
 	if (can_filter_in_kernel) {
 		if ((err = set_kernel_filter(handle, &fcode)) == 0)
 		{
-			/* Installation succeded - using kernel filter. */
-			handlep->filtering_in_kernel = 1;
+			/*
+			 * Installation succeded - using kernel filter,
+			 * so userland filtering not needed.
+			 */
+			handlep->filter_in_userland = 0;
 		}
 		else if (err == -1)	/* Non-fatal error */
 		{
@@ -2501,7 +2505,7 @@ pcap_setfilter_linux_common(pcap_t *handle, struct bpf_program *filter,
 	 * calling "pcap_setfilter()".  Otherwise, the kernel filter may
 	 * filter out packets that would pass the new userland filter.
 	 */
-	if (!handlep->filtering_in_kernel)
+	if (handlep->filter_in_userland)
 		reset_kernel_filter(handle);
 
 	/*
@@ -3511,7 +3515,19 @@ prepare_tpacket_socket(pcap_t *handle)
 	handlep->tp_hdrlen = sizeof(struct tpacket_hdr);
 
 #ifdef HAVE_TPACKET3
-	ret = init_tpacket(handle, TPACKET_V3, "TPACKET_V3");
+	/*
+	 * The only mode in which buffering is done on PF_PACKET
+	 * sockets, so that packets might not be delivered
+	 * immediately, is TPACKET_V3 mode.
+	 *
+	 * The buffering cannot be disabled in that mode, so
+	 * if the user has requested immediate mode, we don't
+	 * use TPACKET_V3.
+	 */
+	if (handle->opt.immediate)
+		ret = 1; /* pretend TPACKET_V3 couldn't be set */
+	else
+		ret = init_tpacket(handle, TPACKET_V3, "TPACKET_V3");
 	if (-1 == ret) {
 		/* Error during setting up TPACKET_V3. */
 		return -1;
@@ -4054,9 +4070,31 @@ static int pcap_wait_for_frames_mmap(pcap_t *handle)
 		pollinfo.fd = handle->fd;
 		pollinfo.events = POLLIN;
 
-		if (handlep->timeout == 0)
-			timeout = -1;	/* block forever */
-		else if (handlep->timeout > 0)
+		if (handlep->timeout == 0) {
+#ifdef HAVE_TPACKET3
+			/*
+			 * XXX - due to a set of (mis)features in the
+			 * TPACKET_V3 kernel code, blocking forever with
+			 * a TPACKET_V3 socket can, if few packets
+			 * are arriving and passing the socket filter,
+			 * cause most packets to be dropped.  See
+			 * libpcap issue #335 for the full painful
+			 * story.  The workaround is to have poll()
+			 * time out very quickly, so we grab the
+			 * frames handed to us, and return them to
+			 * the kernel, ASAP.
+			 *
+			 * If those issues are ever fixed, we might
+			 * want to check the kernel version and block
+			 * forever with TPACKET_V3 if we're running
+			 * with a kernel that has the fix.
+			 */
+			if (handlep->tp_version == TPACKET_V3)
+				timeout = 1;	/* don't block for very long */
+			else
+#endif
+				timeout = -1;	/* block forever */
+		} else if (handlep->timeout > 0)
 			timeout = handlep->timeout;	/* block for that amount of time */
 		else
 			timeout = 0;	/* non-blocking mode - poll to pick up errors */
@@ -4145,7 +4183,6 @@ static int pcap_handle_packet_mmap(
 {
 	struct pcap_linux *handlep = handle->priv;
 	unsigned char *bp;
-	int run_bpf;
 	struct sockaddr_ll *sll;
 	struct pcap_pkthdr pcaphdr;
 
@@ -4162,15 +4199,13 @@ static int pcap_handle_packet_mmap(
 	 * If the kernel filtering is enabled we need to run the
 	 * filter until all the frames present into the ring
 	 * at filter creation time are processed.
-	 * In such case filtering_in_kernel is used as a counter for the
-	 * packet we need to filter.
+	 * In this case, blocks_to_filter_in_userland is used
+	 * as a counter for the packet we need to filter.
 	 * Note: alternatively it could be possible to stop applying
 	 * the filter when the ring became empty, but it can possibly
 	 * happen a lot later... */
 	bp = frame + tp_mac;
-	run_bpf = (!handlep->filtering_in_kernel) ||
-		((handlep->filtering_in_kernel>1) && handlep->filtering_in_kernel--);
-	if (run_bpf && handle->fcode.bf_insns &&
+	if (handlep->filter_in_userland && handle->fcode.bf_insns &&
 			(bpf_filter(handle->fcode.bf_insns, bp,
 				tp_len, tp_snaplen) == 0))
 		return 0;
@@ -4282,7 +4317,7 @@ pcap_read_linux_mmap_v1(pcap_t *handle, int max_packets, pcap_handler callback,
 
 	/* non-positive values of max_packets are used to require all
 	 * packets currently available in the ring */
-	while ((pkts < max_packets) || (max_packets <= 0)) {
+	while ((pkts < max_packets) || PACKET_COUNT_IS_UNLIMITED(max_packets)) {
 		union thdr h;
 
 		h.raw = pcap_get_ring_frame(handle, TP_STATUS_USER);
@@ -4308,9 +4343,25 @@ pcap_read_linux_mmap_v1(pcap_t *handle, int max_packets, pcap_handler callback,
 			return ret;
 		}
 
-		/* next packet */
+		/*
+		 * Hand this block back to the kernel, and, if we're
+		 * counting blocks that need to be filtered in userland
+		 * after having been filtered by the kernel, count
+		 * the one we've just processed.
+		 */
 		h.h1->tp_status = TP_STATUS_KERNEL;
+		if (handlep->blocks_to_filter_in_userland > 0) {
+			handlep->blocks_to_filter_in_userland--;
+			if (handlep->blocks_to_filter_in_userland == 0) {
+				/*
+				 * No more blocks need to be filtered
+				 * in userland.
+				 */
+				handlep->filter_in_userland = 0;
+			}
+		}
 
+		/* next block */
 		if (++handle->offset >= handle->cc)
 			handle->offset = 0;
 
@@ -4340,7 +4391,7 @@ pcap_read_linux_mmap_v2(pcap_t *handle, int max_packets, pcap_handler callback,
 
 	/* non-positive values of max_packets are used to require all
 	 * packets currently available in the ring */
-	while ((pkts < max_packets) || (max_packets <= 0)) {
+	while ((pkts < max_packets) || PACKET_COUNT_IS_UNLIMITED(max_packets)) {
 		union thdr h;
 
 		h.raw = pcap_get_ring_frame(handle, TP_STATUS_USER);
@@ -4370,9 +4421,25 @@ pcap_read_linux_mmap_v2(pcap_t *handle, int max_packets, pcap_handler callback,
 			return ret;
 		}
 
-		/* next packet */
+		/*
+		 * Hand this block back to the kernel, and, if we're
+		 * counting blocks that need to be filtered in userland
+		 * after having been filtered by the kernel, count
+		 * the one we've just processed.
+		 */
 		h.h2->tp_status = TP_STATUS_KERNEL;
+		if (handlep->blocks_to_filter_in_userland > 0) {
+			handlep->blocks_to_filter_in_userland--;
+			if (handlep->blocks_to_filter_in_userland == 0) {
+				/*
+				 * No more blocks need to be filtered
+				 * in userland.
+				 */
+				handlep->filter_in_userland = 0;
+			}
+		}
 
+		/* next block */
 		if (++handle->offset >= handle->cc)
 			handle->offset = 0;
 
@@ -4409,7 +4476,7 @@ pcap_read_linux_mmap_v3(pcap_t *handle, int max_packets, pcap_handler callback,
 
 	/* non-positive values of max_packets are used to require all
 	 * packets currently available in the ring */
-	while ((pkts < max_packets) || (max_packets <= 0)) {
+	while ((pkts < max_packets) || PACKET_COUNT_IS_UNLIMITED(max_packets)) {
 		if (handlep->current_packet == NULL) {
 			h.raw = pcap_get_ring_frame(handle, TP_STATUS_USER);
 			if (!h.raw)
@@ -4420,7 +4487,7 @@ pcap_read_linux_mmap_v3(pcap_t *handle, int max_packets, pcap_handler callback,
 		}
 		int packets_to_read = handlep->packets_left;
 
-		if (max_packets >= 0 && packets_to_read > max_packets) {
+		if (!PACKET_COUNT_IS_UNLIMITED(max_packets) && packets_to_read > max_packets) {
 			packets_to_read = max_packets;
 		}
 
@@ -4454,9 +4521,26 @@ pcap_read_linux_mmap_v3(pcap_t *handle, int max_packets, pcap_handler callback,
 		}
 
 		if (handlep->packets_left <= 0) {
-			/* next block */
+			/*
+			 * Hand this block back to the kernel, and, if
+			 * we're counting blocks that need to be
+			 * filtered in userland after having been
+			 * filtered by the kernel, count the one we've
+			 * just processed.
+			 */
 			h.h3->hdr.bh1.block_status = TP_STATUS_KERNEL;
+			if (handlep->blocks_to_filter_in_userland > 0) {
+				handlep->blocks_to_filter_in_userland--;
+				if (handlep->blocks_to_filter_in_userland == 0) {
+					/*
+					 * No more blocks need to be filtered
+					 * in userland.
+					 */
+					handlep->filter_in_userland = 0;
+				}
+			}
 
+			/* next block */
 			if (++handle->offset >= handle->cc)
 				handle->offset = 0;
 
@@ -4490,13 +4574,22 @@ pcap_setfilter_linux_mmap(pcap_t *handle, struct bpf_program *filter)
 	if (ret < 0)
 		return ret;
 
-	/* if the kernel filter is enabled, we need to apply the filter on
-	 * all packets present into the ring. Get an upper bound of their number
+	/*
+	 * If we're filtering in userland, there's nothing to do;
+	 * the new filter will be used for the next packet.
 	 */
-	if (!handlep->filtering_in_kernel)
+	if (handlep->filter_in_userland)
 		return ret;
 
-	/* walk the ring backward and count the free slot */
+	/*
+	 * We're filtering in the kernel; the packets present in
+	 * all blocks currently in the ring were already filtered
+	 * by the old filter, and so will need to be filtered in
+	 * userland by the new filter.
+	 *
+	 * Get an upper bound for the number of such blocks; first,
+	 * walk the ring backward and count the free blocks.
+	 */
 	offset = handle->offset;
 	if (--handle->offset < 0)
 		handle->offset = handle->cc - 1;
@@ -4507,11 +4600,39 @@ pcap_setfilter_linux_mmap(pcap_t *handle, struct bpf_program *filter)
 			break;
 	}
 
+	/*
+	 * If we found free blocks, decrement the count of free
+	 * blocks by 1, just in case we lost a race with another
+	 * thread of control that was adding a packet while
+	 * we were counting and that had run the filter before
+	 * we changed it.
+	 *
+	 * XXX - could there be more than one block added in
+	 * this fashion?
+	 *
+	 * XXX - is there a way to avoid that race, e.g. somehow
+	 * wait for all packets that passed the old filter to
+	 * be added to the ring?
+	 */
+	if (n != 0)
+		n--;
+
 	/* be careful to not change current ring position */
 	handle->offset = offset;
 
-	/* store the number of packets currently present in the ring */
-	handlep->filtering_in_kernel = 1 + (handle->cc - n);
+	/*
+	 * Set the count of blocks worth of packets to filter
+	 * in userland to the total number of blocks in the
+	 * ring minus the number of free blocks we found, and
+	 * turn on userland filtering.  (The count of blocks
+	 * worth of packets to filter in userland is guaranteed
+	 * not to be zero - n, above, couldn't be set to a
+	 * value > handle->cc, and if it were equal to
+	 * handle->cc, it wouldn't be zero, and thus would
+	 * be decremented to handle->cc - 1.)
+	 */
+	handlep->blocks_to_filter_in_userland = handle->cc - n;
+	handlep->filter_in_userland = 1;
 	return ret;
 }
 
@@ -5014,7 +5135,7 @@ enter_rfmon_mode_wext(pcap_t *handle, int sock_fd, const char *device)
 		ireq.ifr_ifrn.ifrn_name[sizeof ireq.ifr_ifrn.ifrn_name - 1] = 0;
 		ireq.u.data.length = 1;	/* 1 argument */
 		args[0] = 3;	/* request Prism header */
-		memcpy(ireq.u.name, args, IFNAMSIZ);
+		memcpy(ireq.u.name, args, sizeof (int));
 		if (ioctl(sock_fd, cmd, &ireq) != -1) {
 			/*
 			 * Success.

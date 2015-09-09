@@ -317,12 +317,12 @@ int	yylex(void);
 int	pcap_offline_read(pcap_t *, int, pcap_handler, u_char *);
 int	pcap_read(pcap_t *, int cnt, pcap_handler, u_char *);
 
-/*#ifndef HAVE_STRLCPY
+#ifndef HAVE_STRLCPY
 #define strlcpy(x, y, z) \
 	(strncpy((x), (y), (z)), \
 	 ((z) <= 0 ? 0 : ((x)[(z) - 1] = '\0')), \
 	 strlen((y)))
-#endif*/
+#endif
 
 #include <stdarg.h>
 
@@ -335,6 +335,12 @@ extern int snprintf (char *, size_t, const char *, ...);
 #define vsnprintf pcap_vsnprintf
 extern int vsnprintf (char *, size_t, const char *, va_list ap);
 #endif
+
+/*
+ * Does the packet count argument to a module's read routine say
+ * "supply packets until you run out of packets"?
+ */
+#define PACKET_COUNT_IS_UNLIMITED(count)	((count) <= 0)
 
 /*
  * Routines that most pcap implementations can use for non-blocking mode.

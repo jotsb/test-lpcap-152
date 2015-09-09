@@ -24,7 +24,7 @@
 
 /* Define to 1 if you have the declaration of `ether_hostton', and to 0 if you
    don't. */
-#define HAVE_DECL_ETHER_HOSTTON 1
+/* #undef HAVE_DECL_ETHER_HOSTTON */
 
 /* define if you have a /dev/dlpi */
 /* #undef HAVE_DEV_DLPI */
@@ -33,7 +33,7 @@
 /* #undef HAVE_DLPI_PASSIVE */
 
 /* Define to 1 if you have the `ether_hostton' function. */
-#define HAVE_ETHER_HOSTTON 1
+/* #undef HAVE_ETHER_HOSTTON */
 
 /* Define to 1 if fseeko (and presumably ftello) exists and is declared. */
 #define HAVE_FSEEKO 1
@@ -150,7 +150,7 @@
 #define HAVE_STDINT_H 1
 
 /* Define to 1 if you have the <stdlib.h> header file. */
-#define HAVE_STDLIB_H 0
+#define HAVE_STDLIB_H 1
 
 /* Define to 1 if you have the `strerror' function. */
 #define HAVE_STRERROR 1
@@ -162,7 +162,7 @@
 #define HAVE_STRING_H 1
 
 /* Define to 1 if you have the `strlcpy' function. */
-/* #undef HAVE_STRLCPY */
+#define HAVE_STRLCPY 1
 
 /* Define to 1 if the system has the type `struct BPF_TIMEVAL'. */
 /* #undef HAVE_STRUCT_BPF_TIMEVAL */
@@ -171,7 +171,7 @@
 /* #undef HAVE_STRUCT_ETHER_ADDR */
 
 /* Define to 1 if you have the <sys/bitypes.h> header file. */
-#define HAVE_SYS_BITYPES_H 0
+/* #undef HAVE_SYS_BITYPES_H */
 
 /* Define to 1 if you have the <sys/bufmod.h> header file. */
 /* #undef HAVE_SYS_BUFMOD_H */
@@ -225,7 +225,7 @@
 /* #undef NEED_YYPARSE_WRAPPER */
 
 /* Define to 1 if netinet/ether.h declares `ether_hostton' */
-#define NETINET_ETHER_H_DECLARES_ETHER_HOSTTON /**/
+/* #undef NETINET_ETHER_H_DECLARES_ETHER_HOSTTON */
 
 /* Define to 1 if netinet/if_ether.h declares `ether_hostton' */
 /* #undef NETINET_IF_ETHER_H_DECLARES_ETHER_HOSTTON */
